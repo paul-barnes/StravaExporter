@@ -30,7 +30,6 @@ namespace StravaExporter
                 Console.WriteLine("Error occurred:");
                 Console.WriteLine(e.Message);
             }
-
         }
 
         static void Run(Options opt)
@@ -45,19 +44,113 @@ namespace StravaExporter
                 throw new Exception(string.Format("The specified output directory {0} does not exist", opt.OutputPath));
 
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
+            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
 
+            List<long> activityIds;
+            var activitiesApi = new ActivitiesApi();
+            bool bFoundActivities = GetActivities(opt, activitiesApi, out activityIds);
+
+            var streamsApi = new StreamsApi();
+            int nSkipped = 0;
+            for(int i=0; i<activityIds.Count; ++i)
+            {
+                long activityId = activityIds[i];
+
+                DetailedActivity detailedActivity = activitiesApi.GetActivityById(activityId, true);
+
+                string pathname = BuildFilePathName(opt, detailedActivity);
+                if (File.Exists(pathname))
+                {
+                    // this only happens with -a option for downloading a specific activity;
+                    // with -d option, we automatically skip activities which were already 
+                    // downloaded (GetActivities just does not return them)
+                    Console.WriteLine("The file {0} exists; overwrite? [Y/N]", pathname);
+                    string s = Console.ReadLine();
+                    if (s != "Y" && s != "y")
+                    {
+                        ++nSkipped;
+                        continue;
+                    }
+                }
+
+                StreamSet streams = streamsApi.GetActivityStreams(activityId,
+                    new List<string>()
+                    {
+                        "distance",
+                        "time",
+                        "latlng",
+                        "altitude",
+                        "heartrate",
+                        "cadence",
+                        //"temp",
+                        "watts",
+                        "velocity_smooth"
+                        //"moving"
+                    },
+                    true);
+
+                DistanceStream dist = streams.Distance; // float?
+                TimeStream time = streams.Time; // int?
+                LatLngStream latlng = streams.Latlng; // IO.Swagger.Model.LatLng
+                AltitudeStream altitude = streams.Altitude; // float?
+                HeartrateStream hr = streams.Heartrate; // int?
+                CadenceStream cadence = streams.Cadence; // int?
+                //TemperatureStream temp = streams.Temp; // int?
+                PowerStream watts = streams.Watts; // int?
+                SmoothVelocityStream velocity = streams.VelocitySmooth; // float?
+                //MovingStream moving = streams.Moving; // bool?
+
+                WriteTCX(pathname,
+                    detailedActivity,
+                    dist != null ? dist.Data : null,
+                    time != null ? time.Data : null,
+                    latlng != null ? latlng.Data : null,
+                    altitude != null ? altitude.Data : null,
+                    hr != null ? hr.Data : null,
+                    cadence != null ? cadence.Data : null,
+                    watts != null ? watts.Data : null,
+                    velocity != null ? velocity.Data : null);
+
+                Console.WriteLine("Exported activity {0}", pathname);
+            }
+
+            Console.WriteLine();
+            if (!bFoundActivities)
+                Console.WriteLine("No activities existed to export");
+            else if (activityIds.Count == 0)
+                Console.WriteLine("No new activities were found to export");
+            else
+                Console.WriteLine("Exported {0} activities", activityIds.Count - nSkipped);
+        }
+
+        static bool GetActivities(Options opt, ActivitiesApi activitiesApi, out List<long> activityIds)
+        {
+            // downloading a specific activity? 
+            activityIds = new List<long>();
+            if (opt.Activity != 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Downloading activity {0} and saving to directory {1}", opt.Activity, opt.OutputPath);
+                Console.WriteLine();
+                activityIds.Add(opt.Activity);
+                return true;
+            }
+
+            // downloading all activities between today and opt.Days ago 
             Console.WriteLine();
             Console.WriteLine("Downloading activities for the past {0} days and saving to directory {1}", opt.Days, opt.OutputPath);
             Console.WriteLine();
 
-            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
-
-            List<long> activityIds = new List<long>();
-            List<string> pathNames = new List<string>();
             bool bFoundActivities = false;
-            int before = GetEpochTime(DateTime.UtcNow);
-            int after = GetEpochTime(DateTime.UtcNow.AddDays(-opt.Days));
-            var activitiesApi = new ActivitiesApi();
+
+            // get everything from now to opt.Days ago; 
+            // adjust the time on "after" however so we include 
+            // things that happened any time on that oldest day
+            // and not just since the current time on that day
+            DateTime dtBefore = DateTime.UtcNow;
+            int before = GetEpochTime(dtBefore);
+            DateTime dtAfter = new DateTime(dtBefore.Year, dtBefore.Month, dtBefore.Day - opt.Days, 0, 0, 0);
+            int after = GetEpochTime(dtAfter);
 
             for (int page = 1; true; ++page)
             {
@@ -67,7 +160,7 @@ namespace StravaExporter
                 bFoundActivities = true;
                 foreach (var activity in activities)
                 {
-                    if(activity.Type != ActivityType.Ride && activity.Type != ActivityType.Run)
+                    if (activity.Type != ActivityType.Ride && activity.Type != ActivityType.Run)
                     {
                         Console.WriteLine("Skipping activity [{0}] on [{1}] with type [{2}]", activity.Name, activity.StartDateLocal.ToString(), activity.Type.ToString());
                         continue;
@@ -79,69 +172,10 @@ namespace StravaExporter
                         continue;
                     }
                     activityIds.Add(activity.Id.Value);
-                    pathNames.Add(pathname);
                 }
             }
             Console.WriteLine();
-
-            var streamsApi = new StreamsApi();
-            for(int i=0; i<activityIds.Count; ++i)
-            {
-                //activity_id = 2355093847; // San Joaquin +5 5/9/2019
-                //activity_id = 2479897758; // ToAD Janesville
-                long activityId = activityIds[i];
-
-                DetailedActivity detailedActivity = activitiesApi.GetActivityById(activityId, true);
-
-                StreamSet streams = streamsApi.GetActivityStreams(activityId,
-                    new List<string>()
-                    {
-                        "distance",
-                        "time",
-                        "latlng",
-                        "altitude",
-                        "heartrate",
-                        "cadence",
-                        "temp",
-                        "watts",
-                        "velocity_smooth",
-                        "moving"
-                    },
-                    true);
-
-                DistanceStream dist = streams.Distance; // float?
-                TimeStream time = streams.Time; // int?
-                LatLngStream latlng = streams.Latlng; // IO.Swagger.Model.LatLng
-                AltitudeStream altitude = streams.Altitude; // float?
-                HeartrateStream hr = streams.Heartrate; // int?
-                CadenceStream cadence = streams.Cadence; // int?
-                TemperatureStream temp = streams.Temp; // int?
-                PowerStream watts = streams.Watts; // int?
-                SmoothVelocityStream velocity = streams.VelocitySmooth; // float?
-                MovingStream moving = streams.Moving; // bool?
-
-                WriteTCX(pathNames[i],
-                    detailedActivity,
-                    dist != null ? dist.Data : null,
-                    time != null ? time.Data : null,
-                    latlng != null ? latlng.Data : null,
-                    altitude != null ? altitude.Data : null,
-                    hr != null ? hr.Data : null,
-                    cadence != null ? cadence.Data : null,
-                    temp != null ? temp.Data : null,
-                    watts != null ? watts.Data : null,
-                    velocity != null ? velocity.Data : null);
-
-                Console.WriteLine("Exported activity {0}", pathNames[i]);
-            }
-
-            Console.WriteLine();
-            if (!bFoundActivities)
-                Console.WriteLine("No activities were found to export in the given past number of days");
-            else if (activityIds.Count == 0)
-                Console.WriteLine("No new activities were found to export");
-            else
-                Console.WriteLine("Exported {0} activities", activityIds.Count);
+            return bFoundActivities;
         }
 
         static string RemoveInvalidFilenameChars(string s)
@@ -152,18 +186,30 @@ namespace StravaExporter
             return s;
         }
 
-        static string BuildFilePathName(Options opt, SummaryActivity activity)
+        static string BuildFilePathName(Options opt, string activityName, DateTime startDate)
         {
             string name = string.Format("{0}_{1}.tcx",
-                RemoveInvalidFilenameChars(activity.Name),
-                activity.StartDateLocal.Value.ToString("yyyyMMddTHHmmss"));
+                RemoveInvalidFilenameChars(activityName),
+                startDate.ToString("yyyyMMddTHHmmss"));
+            name = name.Replace(' ', '_');
+            while (name.Contains("__"))
+                name = name.Replace("__", "_");
             return Path.Combine(opt.OutputPath, name);
         }
 
-
-        static int GetEpochTime(DateTime dateTime)
+        static string BuildFilePathName(Options opt, SummaryActivity activity)
         {
-            TimeSpan t = dateTime - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            return BuildFilePathName(opt, activity.Name, activity.StartDateLocal.Value);
+        }
+        static string BuildFilePathName(Options opt, DetailedActivity activity)
+        {
+            return BuildFilePathName(opt, activity.Name, activity.StartDateLocal.Value);
+        }
+
+        static int GetEpochTime(DateTime dateTimeUTC)
+        {
+            // return Unix epoch time, seconds since 1/1/1970
+            TimeSpan t = dateTimeUTC - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             return (int)t.TotalSeconds;
         }
         static int GetLapMaxHeartRate(List<int?> heartRates, int startIndex, int endIndex)
@@ -203,7 +249,7 @@ namespace StravaExporter
         static void WriteTCX(string pathName, DetailedActivity activity, 
             List<float?> dist, List<int?> time, List<LatLng> latlng, 
             List<float?> altitude, List<int?> heartRates, List<int?> cadence, 
-            List<int?> temp, List<int?> watts, List<float?> velocity)
+            List<int?> watts, List<float?> velocity)
         {
             int nTrackPoints = time.Count;
             if (dist != null && dist.Count != nTrackPoints ||
@@ -211,7 +257,6 @@ namespace StravaExporter
                 altitude != null && altitude.Count != nTrackPoints ||
                 heartRates != null && heartRates.Count != nTrackPoints ||
                 cadence != null && cadence.Count != nTrackPoints ||
-                temp != null && temp.Count != nTrackPoints ||
                 watts != null && watts.Count != nTrackPoints ||
                 velocity != null && velocity.Count != nTrackPoints)
             {
@@ -284,6 +329,8 @@ namespace StravaExporter
                 double sum = lapHeartRateWeights.Sum();
 				// total weight should be 1
                 System.Diagnostics.Debug.Assert(Math.Abs(sum - 1.0) < 0.0000001);
+                if (Math.Abs(sum - 1.0) > 0.0000001)
+                    Console.WriteLine("WARNING: Heart rate weights did not sum to 1");
             }
 
             for(int j=0; j<laps.Count; ++j)
@@ -325,22 +372,28 @@ namespace StravaExporter
                 if(bHasPower)
                 {
                     // different people recommend slightly different conversion factors
-                    // between kJ and Cal, but we'll use a 1 to 1 conversion as does
-                    // training peaks and trainer road; calculate the kJ as watts * time / 1000
+                    // between kJ and Cal, but we'll use a 1 to 1 conversion as do
+                    // training peaks and trainer road; better to underestimate a bit
+                    // (some other programs use a conversion factor like 
+                    // Cal = 1.04 * kJ (GC) or
+                    // Cal = 1.05 * kJ (Strava) 
+                    // calculate the kJ as 
+                    //      watts * time / 1000
                     // since a watt is a joule/second
                     calories = (int)Math.Round((double)lap.AverageWatts.Value * (double)lap.ElapsedTime.Value / 1000.0);
                 }
                 else if (activity.Calories != null && lapHeartRateWeights != null)
                 {
-                    // divide the total calories up between the laps based on the average hr per lap
-                    // calculate a weight from the avg hr and lap time versus total time,
-                    // and use that percentage of the total calories for the lap calories
+                    // divide the total calories from Strava up between the laps based 
+                    // on the average hr per lap. We calculate a weight from the avg hr 
+                    // and lap time, and use that percentage of the total calories for 
+                    // the lap calories
                     calories = (int)Math.Round(lapHeartRateWeights[j] * activity.Calories.Value);
                 }
 
                 xmlWriter.WriteStartElement("Calories");
                 xmlWriter.WriteValue(calories);
-                xmlWriter.WriteEndElement(); // calories
+                xmlWriter.WriteEndElement();
 
                 if(avgLapHeartRates != null)
                 {
