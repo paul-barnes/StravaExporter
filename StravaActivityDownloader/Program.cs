@@ -22,17 +22,81 @@ namespace StravaExporter
         {
             try
             {
-                CommandLine.Parser.Default.ParseArguments<Options>(args)
-                    .WithParsed<Options>(opts => Run(opts));
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
+
+                var parser = new Parser(settings =>
+                {
+                    settings.CaseSensitive = false;
+                    settings.HelpWriter = Console.Error;
+                });
+                var cmd = parser.ParseArguments<AuthorizeOptions, ActivityOptions, ExportOptions>(args);
+                cmd
+                    .WithParsed<AuthorizeOptions>(o => HandleAuthorize(o))
+                    .WithParsed<ActivityOptions>(o => HandleActivity(o))
+                    .WithParsed<ExportOptions>(o => HandleExport(o));
             }
-            catch(Exception e)
+            catch (Exception e)
             {
                 Console.WriteLine("Error occurred:");
                 Console.WriteLine(e.Message);
             }
         }
 
-        static void Run(Options opt)
+        static void HandleAuthorize(AuthorizeOptions opt)
+        {
+            new StravaAuthorizer().Authorize(opt.Port);
+        }
+
+        static void HandleActivity(ActivityOptions opt)
+        {
+            ValidateOutputPath(opt);
+
+            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
+
+            var activityIds = opt.Activities.ToList<long>();
+            if (activityIds.Count == 0)
+                throw new Exception("No activities were specified. Please provide one or more Strava activity ids separated by space");
+
+            Console.WriteLine();
+            if(activityIds.Count == 1)
+                Console.WriteLine("Downloading the specified activity and saving to directory {0}", opt.OutputPath);
+            else
+                Console.WriteLine("Downloading the specified activities and saving to directory {0}", opt.OutputPath);
+            Console.WriteLine();
+
+            DownloadActivities(new ActivitiesApi(), opt.OutputPath, ref activityIds);
+
+            Console.WriteLine();
+            Console.WriteLine("Exported {0} activities", activityIds.Count);
+        }
+
+        static void HandleExport(ExportOptions opt)
+        {
+            ValidateOutputPath(opt);
+
+            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
+
+            // downloading all activities between today and opt.Days ago 
+            Console.WriteLine();
+            Console.WriteLine("Downloading activities for the past {0} days and saving to directory {1}", opt.Days, opt.OutputPath);
+            Console.WriteLine();
+
+            List<long> activityIds;
+            var activitiesApi = new ActivitiesApi();
+
+            bool bFoundActivities = GetActivities(opt, activitiesApi, out activityIds);
+            DownloadActivities(activitiesApi, opt.OutputPath, ref activityIds);
+            
+            Console.WriteLine();
+            if (!bFoundActivities)
+                Console.WriteLine("No activities existed to export");
+            else if (activityIds.Count == 0)
+                Console.WriteLine("No new activities were found to export");
+            else
+                Console.WriteLine("Exported {0} activities", activityIds.Count);
+        }
+
+        static void ValidateOutputPath(CommonOptions opt)
         {
             if (string.IsNullOrEmpty(opt.OutputPath))
             {
@@ -42,35 +106,29 @@ namespace StravaExporter
             }
             if (!Directory.Exists(opt.OutputPath))
                 throw new Exception(string.Format("The specified output directory {0} does not exist", opt.OutputPath));
+        }
 
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
-            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
-
-            List<long> activityIds;
-            var activitiesApi = new ActivitiesApi();
-            bool bFoundActivities = GetActivities(opt, activitiesApi, out activityIds);
+        static void DownloadActivities(ActivitiesApi activitiesApi, string outputPath, ref List<long> activityIds)
+        {
+            var exportedActivityIds = new List<long>();
 
             var streamsApi = new StreamsApi();
-            int nSkipped = 0;
-            for(int i=0; i<activityIds.Count; ++i)
+            for (int i = 0; i < activityIds.Count; ++i)
             {
                 long activityId = activityIds[i];
 
                 DetailedActivity detailedActivity = activitiesApi.GetActivityById(activityId, true);
 
-                string pathname = BuildFilePathName(opt, detailedActivity);
+                string pathname = BuildFilePathName(outputPath, detailedActivity);
                 if (File.Exists(pathname))
                 {
-                    // this only happens with -a option for downloading a specific activity;
-                    // with -d option, we automatically skip activities which were already 
+                    // this only happens with Activity verb for downloading specific activity id(s);
+                    // with Export verb, we automatically skip activities which were already 
                     // downloaded (GetActivities just does not return them)
                     Console.WriteLine("The file {0} exists; overwrite? [Y/N]", pathname);
                     string s = Console.ReadLine();
                     if (s != "Y" && s != "y")
-                    {
-                        ++nSkipped;
                         continue;
-                    }
                 }
 
                 StreamSet streams = streamsApi.GetActivityStreams(activityId,
@@ -111,35 +169,16 @@ namespace StravaExporter
                     watts != null ? watts.Data : null,
                     velocity != null ? velocity.Data : null);
 
+                exportedActivityIds.Add(activityId);
                 Console.WriteLine("Exported activity {0}", pathname);
             }
 
-            Console.WriteLine();
-            if (!bFoundActivities)
-                Console.WriteLine("No activities existed to export");
-            else if (activityIds.Count == 0)
-                Console.WriteLine("No new activities were found to export");
-            else
-                Console.WriteLine("Exported {0} activities", activityIds.Count - nSkipped);
+            activityIds = exportedActivityIds;
         }
 
-        static bool GetActivities(Options opt, ActivitiesApi activitiesApi, out List<long> activityIds)
+        static bool GetActivities(ExportOptions opt, ActivitiesApi activitiesApi, out List<long> activityIds)
         {
-            // downloading a specific activity? 
             activityIds = new List<long>();
-            if (opt.Activity != 0)
-            {
-                Console.WriteLine();
-                Console.WriteLine("Downloading activity {0} and saving to directory {1}", opt.Activity, opt.OutputPath);
-                Console.WriteLine();
-                activityIds.Add(opt.Activity);
-                return true;
-            }
-
-            // downloading all activities between today and opt.Days ago 
-            Console.WriteLine();
-            Console.WriteLine("Downloading activities for the past {0} days and saving to directory {1}", opt.Days, opt.OutputPath);
-            Console.WriteLine();
 
             bool bFoundActivities = false;
 
@@ -165,7 +204,7 @@ namespace StravaExporter
                         Console.WriteLine("Skipping activity [{0}] on [{1}] with type [{2}]", activity.Name, activity.StartDateLocal.ToString(), activity.Type.ToString());
                         continue;
                     }
-                    string pathname = BuildFilePathName(opt, activity);
+                    string pathname = BuildFilePathName(opt.OutputPath, activity);
                     if (File.Exists(pathname))
                     {
                         Console.WriteLine("Skipping activity because it has already been exported: {0} ", pathname);
@@ -186,7 +225,7 @@ namespace StravaExporter
             return s;
         }
 
-        static string BuildFilePathName(Options opt, string activityName, DateTime startDate)
+        static string BuildFilePathName(string outputPath, string activityName, DateTime startDate)
         {
             string name = string.Format("{0}_{1}.tcx",
                 RemoveInvalidFilenameChars(activityName),
@@ -194,16 +233,16 @@ namespace StravaExporter
             name = name.Replace(' ', '_');
             while (name.Contains("__"))
                 name = name.Replace("__", "_");
-            return Path.Combine(opt.OutputPath, name);
+            return Path.Combine(outputPath, name);
         }
 
-        static string BuildFilePathName(Options opt, SummaryActivity activity)
+        static string BuildFilePathName(string outputPath, SummaryActivity activity)
         {
-            return BuildFilePathName(opt, activity.Name, activity.StartDateLocal.Value);
+            return BuildFilePathName(outputPath, activity.Name, activity.StartDateLocal.Value);
         }
-        static string BuildFilePathName(Options opt, DetailedActivity activity)
+        static string BuildFilePathName(string outputPath, DetailedActivity activity)
         {
-            return BuildFilePathName(opt, activity.Name, activity.StartDateLocal.Value);
+            return BuildFilePathName(outputPath, activity.Name, activity.StartDateLocal.Value);
         }
 
         static int GetEpochTime(DateTime dateTimeUTC)
@@ -575,6 +614,12 @@ namespace StravaExporter
             string client_secret = System.Configuration.ConfigurationManager.AppSettings["client_secret"];
             string refresh_token = System.Configuration.ConfigurationManager.AppSettings["refresh_token"];
 
+            if (string.IsNullOrEmpty(refresh_token))
+            {
+                new StravaAuthorizer().Authorize();
+                refresh_token = System.Configuration.ConfigurationManager.AppSettings["refresh_token"];
+            }
+
             HttpClient httpClient = new HttpClient();
             var builder = new UriBuilder("https://www.strava.com/oauth/token");
             builder.Port = -1;
@@ -593,7 +638,7 @@ namespace StravaExporter
             string access_token = responseDict["access_token"];
             if (refresh_token.CompareTo(responseDict["refresh_token"]) != 0)
                 SetAppSetting("refresh_token", responseDict["refresh_token"]);
-            SetAppSetting("access_token", access_token);
+            //SetAppSetting("access_token", access_token);
             return access_token;
         }
 
