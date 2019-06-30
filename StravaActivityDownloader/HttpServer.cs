@@ -250,8 +250,12 @@ namespace StravaExporter
             //Console.WriteLine("request: {0}", p.http_url);
             p.writeSuccess();
             p.outputStream.WriteLine("<html><body><h1>Strava Exporter</h1>");
+            if (AccessCode == null)
+                p.outputStream.WriteLine("StravaExporter was NOT authorized to access your data");
+            else
+                p.outputStream.WriteLine("Authorization successful");
+            p.outputStream.WriteLine("<p/>");
             p.outputStream.WriteLine("You may now close this browser window");
-            //p.outputStream.WriteLine("url : {0}", p.http_url);
 
             is_active = false;
         }

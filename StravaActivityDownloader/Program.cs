@@ -13,15 +13,31 @@ using IO.Swagger.Api;
 using IO.Swagger.Client;
 using IO.Swagger.Model;
 using Newtonsoft.Json;
+using StravaExporter.Properties;
 
 namespace StravaExporter
 {
     class Program
     {
+        internal static string client_id = "36425";
+        internal static string client_secret = "ee2979ecc9afe77bff701ed5fd5ff192632fea88";
         static void Main(string[] args)
         {
             try
             {
+                if (Settings.Default.SettingsUpgradeRequired)
+                {
+                    try
+                    {
+                        Settings.Default.Upgrade();
+                        Settings.Default.SettingsUpgradeRequired = false;
+                    }
+                    catch (Exception e)
+                    {
+                        // Upgrade failed - tell the user or whatever
+                        string s = e.Message;
+                    }
+                }
                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
 
                 var parser = new Parser(settings =>
@@ -40,11 +56,15 @@ namespace StravaExporter
                 Console.WriteLine("Error occurred:");
                 Console.WriteLine(e.Message);
             }
+            finally
+            {
+                Settings.Default.Save();
+            }
         }
 
         static void HandleAuthorize(AuthorizeOptions opt)
         {
-            new StravaAuthorizer().Authorize(opt.Port);
+            new StravaAuthorizer().Authorize(client_id, client_secret, opt.Port);
         }
 
         static void HandleActivity(ActivityOptions opt)
@@ -68,6 +88,12 @@ namespace StravaExporter
 
             Console.WriteLine();
             Console.WriteLine("Exported {0} activities", activityIds.Count);
+
+            if (opt.SaveConfiguration)
+            {
+                Settings.Default.OutputDirectory = opt.OutputPath;
+                Console.WriteLine("Saved the output directory {0} as the default", opt.OutputPath);
+            }
         }
 
         static void HandleExport(ExportOptions opt)
@@ -78,7 +104,10 @@ namespace StravaExporter
 
             // downloading all activities between today and opt.Days ago 
             Console.WriteLine();
-            Console.WriteLine("Downloading activities for the past {0} days and saving to directory {1}", opt.Days, opt.OutputPath);
+            Console.WriteLine("Downloading activities for the past {0} days and saving to directory {1}",
+                opt.Days != null ? opt.Days.Value : Settings.Default.Days,
+                opt.OutputPath);
+
             Console.WriteLine();
 
             List<long> activityIds;
@@ -94,13 +123,21 @@ namespace StravaExporter
                 Console.WriteLine("No new activities were found to export");
             else
                 Console.WriteLine("Exported {0} activities", activityIds.Count);
+
+            if(opt.SaveConfiguration)
+            {
+                Settings.Default.OutputDirectory = opt.OutputPath;
+                if (opt.Days != null)
+                    Settings.Default.Days = opt.Days.Value;
+                Console.WriteLine("Saved these options as the defaults");
+            }
         }
 
         static void ValidateOutputPath(CommonOptions opt)
         {
             if (string.IsNullOrEmpty(opt.OutputPath))
             {
-                opt.OutputPath = System.Configuration.ConfigurationManager.AppSettings["output_directory"];
+                opt.OutputPath = Settings.Default.OutputDirectory;
                 if (string.IsNullOrEmpty(opt.OutputPath))
                     throw new Exception("No output path specified in command line and none found in config file");
             }
@@ -186,9 +223,10 @@ namespace StravaExporter
             // adjust the time on "after" however so we include 
             // things that happened any time on that oldest day
             // and not just since the current time on that day
+            int days = opt.Days != null ? opt.Days.Value : Settings.Default.Days;
             DateTime dtBefore = DateTime.UtcNow;
             int before = GetEpochTime(dtBefore);
-            DateTime dtAfter = new DateTime(dtBefore.Year, dtBefore.Month, dtBefore.Day - opt.Days, 0, 0, 0);
+            DateTime dtAfter = new DateTime(dtBefore.Year, dtBefore.Month, dtBefore.Day - days, 0, 0, 0);
             int after = GetEpochTime(dtAfter);
 
             for (int page = 1; true; ++page)
@@ -610,14 +648,12 @@ namespace StravaExporter
 
         static async Task<string> RefreshAccessToken()
         {
-            string client_id = System.Configuration.ConfigurationManager.AppSettings["client_id"];
-            string client_secret = System.Configuration.ConfigurationManager.AppSettings["client_secret"];
-            string refresh_token = System.Configuration.ConfigurationManager.AppSettings["refresh_token"];
+            string refresh_token = Settings.Default.RefreshToken;
 
             if (string.IsNullOrEmpty(refresh_token))
             {
-                new StravaAuthorizer().Authorize();
-                refresh_token = System.Configuration.ConfigurationManager.AppSettings["refresh_token"];
+                new StravaAuthorizer().Authorize(client_id, client_secret);
+                refresh_token = Settings.Default.RefreshToken;
             }
 
             HttpClient httpClient = new HttpClient();
@@ -637,35 +673,8 @@ namespace StravaExporter
 
             string access_token = responseDict["access_token"];
             if (refresh_token.CompareTo(responseDict["refresh_token"]) != 0)
-                SetAppSetting("refresh_token", responseDict["refresh_token"]);
-            //SetAppSetting("access_token", access_token);
+                Properties.Settings.Default.RefreshToken = refresh_token;
             return access_token;
-        }
-
-        internal static bool SetAppSetting(string Key, string Value)
-        {
-            bool result = false;
-            try
-            {
-                System.Configuration.Configuration config =
-                  System.Configuration.ConfigurationManager.OpenExeConfiguration(
-                                       System.Configuration.ConfigurationUserLevel.None);
-
-                config.AppSettings.Settings.Remove(Key);
-                var kvElem = new System.Configuration.KeyValueConfigurationElement(Key, Value);
-                config.AppSettings.Settings.Add(kvElem);
-
-                // Save the configuration file.
-                config.Save(System.Configuration.ConfigurationSaveMode.Modified);
-
-                // Force a reload of a changed section.
-                System.Configuration.ConfigurationManager.RefreshSection("appSettings");
-
-                result = true;
-            }
-            finally
-            { }
-            return result;
         }
     }
 }

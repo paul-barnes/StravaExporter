@@ -14,6 +14,9 @@ namespace StravaExporter
     {
         [Option('o', "output-path", HelpText = "Output directory. Will be taken from config file \"output_directory\" if not provided.")]
         public string OutputPath { get; set; }
+
+        [Option('s', "save-config", HelpText = "Save options --output-path and/or --days as the defaults")]
+        public bool SaveConfiguration { get; set; }
     }
 
     [Verb("Activity", HelpText = "Export the specified activity id(s) to TCX file(s)")]
@@ -26,7 +29,7 @@ namespace StravaExporter
     [Verb("Export", HelpText = "Export all activities in the past 'days' number of days")]
     public class ExportOptions : CommonOptions
     {
-        [Option('d', "days", Default = 5, HelpText = "Download all activities from this many days ago to now")]
-        public int Days { get; set; }
+        [Option('d', "days", HelpText = "Download all activities from this many days ago to now. Default: 5")]
+        public int? Days { get; set; }
     }
 }

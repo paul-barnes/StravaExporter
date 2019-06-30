@@ -16,11 +16,8 @@ namespace StravaExporter
         {
 
         }
-        public void Authorize(int port = 8080)
+        public void Authorize(string client_id, string client_secret, int port = 8080)
         {
-            string client_id = System.Configuration.ConfigurationManager.AppSettings["client_id"];
-            string client_secret = System.Configuration.ConfigurationManager.AppSettings["client_secret"];
-
             // the strava oath/authorize endpoint expects a redirect url so that after the user logs in 
             // to strava in the browser and authorizes the app to access his data, it redirects the browser 
             // to the redirect url. We will start an http server on the specified port in order to receive 
@@ -51,6 +48,9 @@ namespace StravaExporter
 
             string accessCode = httpServer.AccessCode;
 
+            if (accessCode == null)
+                throw new Exception("StravaExporter was not authorized to access Strava data");
+
             // now we need to POST to https://www.strava.com/oauth/token with the access code
             // client_id: your application’s ID, obtained during registration
             // client_secret: your application’s secret, obtained during registration
@@ -73,8 +73,7 @@ namespace StravaExporter
             Console.WriteLine("Access Token = {0}", access_token);
             Console.WriteLine("Refresh Token = {0}", refresh_token);
 
-            //Program.SetAppSetting("access_token", access_token);
-            Program.SetAppSetting("refresh_token", refresh_token);
+            Properties.Settings.Default.RefreshToken = refresh_token;
 
             Console.WriteLine();
             Console.WriteLine("Authorization succeeded");
