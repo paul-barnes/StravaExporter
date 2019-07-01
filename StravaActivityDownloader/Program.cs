@@ -226,7 +226,8 @@ namespace StravaExporter
             int days = opt.Days != null ? opt.Days.Value : Settings.Default.Days;
             DateTime dtBefore = DateTime.UtcNow;
             int before = GetEpochTime(dtBefore);
-            DateTime dtAfter = new DateTime(dtBefore.Year, dtBefore.Month, dtBefore.Day - days, 0, 0, 0);
+            DateTime dtAfter = new DateTime(dtBefore.Year, dtBefore.Month, dtBefore.Day, 0, 0, 0, DateTimeKind.Utc);
+            dtAfter = dtAfter.AddDays(-days);
             int after = GetEpochTime(dtAfter);
 
             for (int page = 1; true; ++page)
@@ -283,10 +284,10 @@ namespace StravaExporter
             return BuildFilePathName(outputPath, activity.Name, activity.StartDateLocal.Value);
         }
 
-        static int GetEpochTime(DateTime dateTimeUTC)
+        static int GetEpochTime(DateTime dateTime)
         {
             // return Unix epoch time, seconds since 1/1/1970
-            TimeSpan t = dateTimeUTC - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            TimeSpan t = dateTime - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             return (int)t.TotalSeconds;
         }
         static int GetLapMaxHeartRate(List<int?> heartRates, int startIndex, int endIndex)
