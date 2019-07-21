@@ -238,7 +238,9 @@ namespace StravaExporter
                 bFoundActivities = true;
                 foreach (var activity in activities)
                 {
-                    if (activity.Type != ActivityType.Ride && activity.Type != ActivityType.Run)
+                    if (activity.Type != ActivityType.Ride && 
+                        activity.Type != ActivityType.Run && 
+                        activity.Type != ActivityType.Walk)
                     {
                         Console.WriteLine("Skipping activity [{0}] on [{1}] with type [{2}]", activity.Name, activity.StartDateLocal.ToString(), activity.Type.ToString());
                         continue;
@@ -374,6 +376,8 @@ namespace StravaExporter
                 xmlWriter.WriteAttributeString("Sport", "Running");
             else if (activity.Type == ActivityType.Ride)
                 xmlWriter.WriteAttributeString("Sport", "Biking");
+            else if (activity.Type == ActivityType.Walk)
+                xmlWriter.WriteAttributeString("Sport", "Other");
             else
                 throw new Exception("Unsupported activity type");
 
