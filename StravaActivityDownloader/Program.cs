@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -312,6 +313,9 @@ namespace StravaExporter
             if (time == null || heartRates == null)
                 return -1;
 
+            if (startIndex == endIndex)
+                return heartRates[startIndex].Value;
+
             double weightedSum = 0;
             double totalTime = 0;
             for(int i = startIndex+1; i <= endIndex; ++i)
@@ -386,6 +390,67 @@ namespace StravaExporter
             xmlWriter.WriteEndElement();
 
             var laps = activity.Laps;
+
+            // been getting data where the StartIndex and EndIndex in the laps is
+            // wrong, and leaving out a lot of the trackpoints; all laps too short
+            // and data at the end of the stream is then ignored. detect this and
+            // try to correct the indices here
+            bool badLapIndices = false;
+            int last_end = -1;
+            foreach(var lap in laps)
+            {
+                if (lap.StartIndex.Value != last_end + 1)
+                    badLapIndices = true;
+                last_end = lap.EndIndex.Value;
+            }
+            if (last_end + 1 != nTrackPoints)
+                badLapIndices = true;
+
+            if (badLapIndices)
+            {
+                Console.WriteLine("Warning: Lap indices do not match stream data. Correcting the indices.");
+                if (true)
+                {
+                    // based on times in time stream vs lap times 
+                    int start_idx = 0;
+                    int start_time = 0;
+                    //int running_total_time = 0;
+                    foreach (var lap in laps)
+                    {
+                        int end_time = start_time + lap.ElapsedTime.Value;
+                        //running_total_time += lap.ElapsedTime.Value;
+                        int end_idx = time.BinarySearch(end_time);
+                        if (end_idx < 0)
+                            end_idx = ~end_idx - 1;
+                        lap.StartIndex = start_idx;
+                        lap.EndIndex = end_idx;
+                        start_idx = end_idx + 1 < time.Count ? end_idx + 1 : end_idx;
+                        start_time = time[start_idx].Value;
+                    }
+                }
+                else
+                {
+                    // based on values in dist stream vs lap distances
+                    int start_idx = 0;
+                    float running_total_dist = 0;
+                    foreach (var lap in laps)
+                    {
+                        running_total_dist += lap.Distance.Value;
+                        int end_idx = dist.BinarySearch(running_total_dist);
+                        if (end_idx < 0)
+                            end_idx = ~end_idx - 1;
+                        lap.StartIndex = start_idx;
+                        lap.EndIndex = end_idx;
+                        start_idx = end_idx + 1 < dist.Count ? end_idx + 1 : end_idx;
+                    }
+                }
+                Debug.Assert(laps.Last().EndIndex == nTrackPoints - 1);
+                if(laps.Last().EndIndex != nTrackPoints - 1)
+                {
+                    Console.WriteLine("Warning - last lap end index not the last trackpoint");
+                    laps.Last().EndIndex = nTrackPoints - 1;
+                }
+            }
 
             // precompute lap avg and max heart rates; needed in advance for per lap 
             // calorie calculations based on lap avg hr
@@ -563,16 +628,20 @@ namespace StravaExporter
 
                     if (cadence != null && cadence[i] != null)
                     {
-                        xmlWriter.WriteStartElement("Cadence");
-                        xmlWriter.WriteValue(cadence[i]);
-                        xmlWriter.WriteEndElement();
+                        if (activity.Type == ActivityType.Ride)
+                        {
+                            xmlWriter.WriteStartElement("Cadence");
+                            xmlWriter.WriteValue(cadence[i]);
+                            xmlWriter.WriteEndElement();
+                        }
 
                         if (cadence[i] > maxCadence)
                             maxCadence = cadence[i].Value;
                     }
 
                     if ((velocity != null && velocity[i] != null) ||
-                        (watts != null && watts[i] != null))
+                        (watts != null && watts[i] != null) || 
+                        (cadence != null && cadence[i] != null))
                     {
                         xmlWriter.WriteStartElement("Extensions");
                         xmlWriter.WriteStartElement("ns3", "TPX", null);
@@ -581,6 +650,12 @@ namespace StravaExporter
                         {
                             xmlWriter.WriteStartElement("ns3", "Speed", null);
                             xmlWriter.WriteValue(velocity[i]);
+                            xmlWriter.WriteEndElement();
+                        }
+                        if (cadence != null && cadence[i] != null && activity.Type != ActivityType.Ride)
+                        {
+                            xmlWriter.WriteStartElement("ns3", "RunCadence", null);
+                            xmlWriter.WriteValue(cadence[i]);
                             xmlWriter.WriteEndElement();
                         }
                         if (watts != null && watts[i] != null)
@@ -615,10 +690,18 @@ namespace StravaExporter
                         xmlWriter.WriteValue(lap.AverageSpeed);
                         xmlWriter.WriteEndElement();
                     }
-
+                    if (lap.AverageCadence != null && activity.Type != ActivityType.Ride)
+                    {
+                        xmlWriter.WriteStartElement("ns3", "AvgRunCadence", null);
+                        xmlWriter.WriteValue((int)Math.Round(lap.AverageCadence.Value));
+                        xmlWriter.WriteEndElement();
+                    }
                     if (maxCadence > 0)
                     {
-                        xmlWriter.WriteStartElement("ns3", "MaxBikeCadence", null);
+                        if(activity.Type == ActivityType.Ride)
+                            xmlWriter.WriteStartElement("ns3", "MaxBikeCadence", null);
+                        else
+                            xmlWriter.WriteStartElement("ns3", "MaxRunCadence", null);
                         xmlWriter.WriteValue(maxCadence);
                         xmlWriter.WriteEndElement();
                     }
