@@ -180,8 +180,8 @@ namespace StravaExporter
                         "cadence",
                         //"temp",
                         "watts",
-                        "velocity_smooth"
-                        //"moving"
+                        "velocity_smooth",
+                        "moving"
                     },
                     true);
 
@@ -194,7 +194,7 @@ namespace StravaExporter
                 //TemperatureStream temp = streams.Temp; // int?
                 PowerStream watts = streams.Watts; // int?
                 SmoothVelocityStream velocity = streams.VelocitySmooth; // float?
-                //MovingStream moving = streams.Moving; // bool?
+                MovingStream moving = streams.Moving; // bool?
 
                 WriteTCX(pathname,
                     detailedActivity,
@@ -205,7 +205,8 @@ namespace StravaExporter
                     hr != null ? hr.Data : null,
                     cadence != null ? cadence.Data : null,
                     watts != null ? watts.Data : null,
-                    velocity != null ? velocity.Data : null);
+                    velocity != null ? velocity.Data : null,
+                    moving != null ? moving.Data : null);
 
                 exportedActivityIds.Add(activityId);
                 Console.WriteLine("Exported activity {0}", pathname);
@@ -330,10 +331,47 @@ namespace StravaExporter
             return (int)(weightedSum / totalTime);
         }
 
+        static void CalculateLapMovingTimeAndSpeed(
+            List<int?> time, List<float?> velocity, 
+            List<bool?> moving, int startIndex, int endIndex, 
+            out int movingTime, out double avg_moving_speed)
+        {
+            avg_moving_speed = 0;
+            double total_time = 0;
+            for (int j = startIndex; j <= endIndex; ++j)
+            {
+                if (!moving[j].Value)
+                    continue;
+
+                if (j == startIndex)
+                {
+                    double delta_t = time[j + 1].Value - time[j].Value;
+                    total_time += delta_t;
+                    avg_moving_speed += velocity[j].Value * delta_t;
+                }
+                else if (j == endIndex)
+                {
+                    double delta_t = time[j].Value - time[j - 1].Value;
+                    total_time += delta_t;
+                    avg_moving_speed += velocity[j].Value * delta_t;
+                }
+                else
+                {
+                    double delta_t_left = (time[j].Value - time[j - 1].Value) / 2.0;
+                    double delta_t_right = (time[j + 1].Value - time[j].Value) / 2.0;
+                    double delta_t = delta_t_left + delta_t_right;
+                    total_time += delta_t;
+                    avg_moving_speed += velocity[j].Value * delta_t;
+                }
+            }
+            avg_moving_speed /= total_time;
+            movingTime = (int)Math.Round(total_time);
+        }
+
         static void WriteTCX(string pathName, DetailedActivity activity, 
             List<float?> dist, List<int?> time, List<LatLng> latlng, 
             List<float?> altitude, List<int?> heartRates, List<int?> cadence, 
-            List<int?> watts, List<float?> velocity)
+            List<int?> watts, List<float?> velocity, List<bool?> moving)
         {
             int nTrackPoints = time.Count;
             if (dist != null && dist.Count != nTrackPoints ||
@@ -414,11 +452,9 @@ namespace StravaExporter
                     // based on times in time stream vs lap times 
                     int start_idx = 0;
                     int start_time = 0;
-                    //int running_total_time = 0;
                     foreach (var lap in laps)
                     {
                         int end_time = start_time + lap.ElapsedTime.Value;
-                        //running_total_time += lap.ElapsedTime.Value;
                         int end_idx = time.BinarySearch(end_time);
                         if (end_idx < 0)
                             end_idx = ~end_idx - 1;
@@ -487,10 +523,18 @@ namespace StravaExporter
                 xmlWriter.WriteStartElement("Lap");
                 xmlWriter.WriteAttributeString("StartTime", lap.StartDate.Value.ToString("yyyy-MM-ddTHH:mm:ssZ"));
 
+                // PB experimenting with calculating moving time to get SportTracks to show moving time and 
+                // more accurate avg speed, but it's calculating it all itself from the trackpoints apparently
+                // and including the non-moving time 
+                //int movingTime;
+                //double avgMovingSpeed;
+                //CalculateLapMovingTimeAndSpeed(time, velocity, moving, lap.StartIndex.Value, lap.EndIndex.Value, out movingTime, out avgMovingSpeed);
+
                 if (lap.ElapsedTime != null)
                 {
                     xmlWriter.WriteStartElement("TotalTimeSeconds");
                     xmlWriter.WriteValue(lap.ElapsedTime);
+                    //xmlWriter.WriteValue(movingTime);
                     xmlWriter.WriteEndElement();
                 }
 
