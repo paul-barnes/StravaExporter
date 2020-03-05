@@ -85,7 +85,7 @@ namespace StravaExporter
                 Console.WriteLine("Downloading the specified activities and saving to directory {0}", opt.OutputPath);
             Console.WriteLine();
 
-            DownloadActivities(new ActivitiesApi(), opt.OutputPath, ref activityIds);
+            DownloadActivities(new ActivitiesApi(), opt.OutputPath, opt.FixHRSpikesAbove, ref activityIds);
 
             Console.WriteLine();
             Console.WriteLine("Exported {0} activities", activityIds.Count);
@@ -115,7 +115,7 @@ namespace StravaExporter
             var activitiesApi = new ActivitiesApi();
 
             bool bFoundActivities = GetActivities(opt, activitiesApi, out activityIds);
-            DownloadActivities(activitiesApi, opt.OutputPath, ref activityIds);
+            DownloadActivities(activitiesApi, opt.OutputPath, opt.FixHRSpikesAbove, ref activityIds);
             
             Console.WriteLine();
             if (!bFoundActivities)
@@ -146,7 +146,30 @@ namespace StravaExporter
                 throw new Exception(string.Format("The specified output directory {0} does not exist", opt.OutputPath));
         }
 
-        static void DownloadActivities(ActivitiesApi activitiesApi, string outputPath, ref List<long> activityIds)
+        static void FixHRSpikesAbove(int cap, List<int?> time, List<int?> heartRates)
+        {
+            var indices = new List<int>();
+            for(int i=0; i<heartRates.Count; ++i)
+                if(heartRates[i].HasValue && heartRates[i].Value > cap)
+                    indices.Add(i);
+
+            int avgHr = cap, prevAvgHr = -1;
+            while(Math.Abs(avgHr - prevAvgHr) > 1)
+            {
+                prevAvgHr = avgHr;
+                foreach (int idx in indices)
+                    heartRates[idx] = avgHr;
+                avgHr = GetLapAvgHeartRate(time, heartRates, 0, heartRates.Count - 1);
+            } 
+            if(indices.Count > 0)
+            {
+                Console.WriteLine(string.Format("Replaced {0} heart rate datapoints above {1} with {2}, the average hr without these spurious values",
+                    indices.Count, cap, avgHr));
+            }
+        }
+
+        static void DownloadActivities(ActivitiesApi activitiesApi, string outputPath, 
+            int? fixHrSpikesAbove, ref List<long> activityIds)
         {
             var exportedActivityIds = new List<long>();
 
@@ -195,6 +218,12 @@ namespace StravaExporter
                 PowerStream watts = streams.Watts; // int?
                 SmoothVelocityStream velocity = streams.VelocitySmooth; // float?
                 MovingStream moving = streams.Moving; // bool?
+
+                if(fixHrSpikesAbove.HasValue && detailedActivity.HasHeartRate != null && 
+                    detailedActivity.HasHeartRate.Value && hr != null)
+                {
+                    FixHRSpikesAbove(fixHrSpikesAbove.Value, time.Data, hr.Data);
+                }
 
                 WriteTCX(pathname,
                     detailedActivity,
@@ -447,6 +476,9 @@ namespace StravaExporter
             if (badLapIndices)
             {
                 Console.WriteLine("Warning: Lap indices do not match stream data. Correcting the indices.");
+
+                // disable unreachable code detected warning
+#pragma warning disable CS0162
                 if (true)
                 {
                     // based on times in time stream vs lap times 
@@ -480,7 +512,8 @@ namespace StravaExporter
                         start_idx = end_idx + 1 < dist.Count ? end_idx + 1 : end_idx;
                     }
                 }
-                Debug.Assert(laps.Last().EndIndex == nTrackPoints - 1);
+#pragma warning restore CS0162
+
                 if(laps.Last().EndIndex != nTrackPoints - 1)
                 {
                     Console.WriteLine("Warning - last lap end index not the last trackpoint");
@@ -510,7 +543,7 @@ namespace StravaExporter
                 for (int i = 0; i < lapHeartRateWeights.Length; ++i)
                     lapHeartRateWeights[i] /= totalWeight;
                 double sum = lapHeartRateWeights.Sum();
-				// total weight should be 1
+                // total weight should be 1
                 System.Diagnostics.Debug.Assert(Math.Abs(sum - 1.0) < 0.0000001);
                 if (Math.Abs(sum - 1.0) > 0.0000001)
                     Console.WriteLine("WARNING: Heart rate weights did not sum to 1");

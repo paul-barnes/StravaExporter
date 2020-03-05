@@ -17,6 +17,9 @@ namespace StravaExporter
 
         [Option('s', "save-config", HelpText = "Save options --output-path and/or --days as the defaults")]
         public bool SaveConfiguration { get; set; }
+
+        [Option("fix-hrspikes", HelpText = "Replace heart rate values above this limit with the average heart rate as computed without these values")]
+        public int? FixHRSpikesAbove{ get; set; }
     }
 
     [Verb("Activity", HelpText = "Export the specified activity id(s) to TCX file(s)")]
