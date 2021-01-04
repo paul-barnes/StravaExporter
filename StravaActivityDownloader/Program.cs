@@ -447,7 +447,7 @@ namespace StravaExporter
                 xmlWriter.WriteAttributeString("Sport", "Running");
             else if (activity.Type == ActivityType.Ride)
                 xmlWriter.WriteAttributeString("Sport", "Biking");
-            else if (activity.Type == ActivityType.Walk)
+            else if (activity.Type == ActivityType.Walk || activity.Type == ActivityType.Hike)
                 xmlWriter.WriteAttributeString("Sport", "Other");
             else
                 throw new Exception("Unsupported activity type");

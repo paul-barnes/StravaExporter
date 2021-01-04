@@ -47,7 +47,20 @@ namespace IO.Swagger.Model
             /// Enum Run for value: Run
             /// </summary>
             [EnumMember(Value = "Run")]
-            Run = 2
+            Run = 2,
+
+            /// <summary>
+            /// PB ADDED MANUALLY: Enum Hike for value: Hike
+            /// </summary>
+            [EnumMember(Value = "Hike")]
+            Hike = 100,
+
+            /// <summary>
+            /// PB ADDED MANUALLY: Enum Walk for value: Walk
+            /// </summary>
+            [EnumMember(Value = "Walk")]
+            Walk = 101
+
         }
 
         /// <summary>
