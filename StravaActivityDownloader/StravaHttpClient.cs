@@ -12,6 +12,15 @@ using System.Threading.Tasks;
 
 namespace StravaExporter
 {
+    class StravaClientException : Exception
+    {
+        public StravaClientException(string message) : base(message) { }
+    }
+    class UnsupportedFormatException : StravaClientException
+    {
+        public UnsupportedFormatException(string message) : base(message) { }
+    }
+
     class StravaHttpClient : HttpClient
     {
         public const string BASE_URL = "https://www.strava.com";
@@ -96,22 +105,29 @@ namespace StravaExporter
             }
         }
 
-        public async Task<DownloadableActivity> BeginDownloadActivity(long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
+        private async Task<HttpResponseMessage> InitiateDownload(long activityId, string baseFileName, OutputFormat outputFormat)
         {
+            string redirect_url = string.Format("{0}/activities/{1}", BASE_URL, activityId); // redirect here if the specified format is not available 
             string url = string.Format("/activities/{0}/export_{1}", activityId, outputFormat.ToString().ToLower());
 
             var response = await GetAsync(url);
-            response.EnsureSuccessStatusCode();
 
-            return new DownloadableActivity(response, outputPath, baseFileName, outputFormat);
+            if (IsRedirect(response.StatusCode) && string.Compare(response.Headers.Location.ToString(), redirect_url, true) == 0)
+                throw new UnsupportedFormatException(string.Format("The activity {0} with id {1} is not available in the specified {2} format", baseFileName, activityId, outputFormat.ToString()));
+
+            response.EnsureSuccessStatusCode();
+            return response;
+        }
+
+        public async Task<DownloadableActivity> BeginDownloadActivity(long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
+        {
+            var httpResponse = await InitiateDownload(activityId, baseFileName, outputFormat);
+            return new DownloadableActivity(httpResponse, outputPath, baseFileName, outputFormat);
         }
 
         public async Task<string> DownloadActivity(long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
         {
-            string url = string.Format("/activities/{0}/export_{1}", activityId, outputFormat.ToString().ToLower());
-
-            var httpResponse = await GetAsync(url);
-            httpResponse.EnsureSuccessStatusCode();
+            var httpResponse = await InitiateDownload(activityId, baseFileName, outputFormat);
             var pathName = GetTargetPathname(outputPath, baseFileName, GetExtension(httpResponse, outputFormat));
             using (FileStream fs = File.Create(pathName))
                 await httpResponse.Content.CopyToAsync(fs);

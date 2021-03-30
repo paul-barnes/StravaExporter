@@ -287,13 +287,20 @@ namespace StravaExporter
                     {
                         if (prevTask.IsFaulted)
                         {
-                            Console.WriteLine();
-                            Console.WriteLine("An error occurred downloading {0}:", GetFileBaseName(activityInfo), prevTask.Exception.ToString());
-                            Console.WriteLine(prevTask.Exception.ToString());
+                            Exception e = prevTask.Exception;
+                            if (e is AggregateException && e.InnerException != null && e.InnerException is StravaClientException)
+                            {
+                                Console.WriteLine("An error occurred downloading {0}: {1}", GetFileBaseName(activityInfo), e.InnerException.Message);
+                            }
+                            else
+                            {
+                                Console.WriteLine("An error occurred downloading {0}:", GetFileBaseName(activityInfo));
+                                Console.WriteLine(prevTask.Exception.ToString());
+                            }
                         }
                         else
                         {
-                            Console.WriteLine("Downloaded {0}", Path.GetFileName(prevTask.Result));
+                            Console.WriteLine("Exported activity {0}", Path.GetFileName(prevTask.Result));
                             ++nbExported;
                         }
                     }
@@ -316,36 +323,45 @@ namespace StravaExporter
             int nbExported = 0;
             foreach (var activityInfo in activities)
             {
-                var downloadable = client.BeginDownloadActivity(activityInfo.Id.Value,
-                    opts.OutputPath, GetFileBaseName(activityInfo), opts.OutputFormat).GetAwaiter().GetResult();
-
-                // we don't/can't know the extension when downloading original file format, until 
-                // we make the request and get the filename from the headers 
-                // so we've given the DownloadableActivity what it needs to build the full pathname
-                // once the extension is known.
-                string pathname = downloadable.GetTargetPathname();
-                if (File.Exists(pathname))
+                try
                 {
-                    // this only happens with Activity verb for downloading specific activity id(s);
-                    // with Export verb, we automatically skip activities which were already 
-                    // downloaded (GetActivities just does not return them)
-                    if (opts.Silent)
-                    {
-                        Console.WriteLine("The file {0} exists; skipping.", Path.GetFileName(pathname));
-                        continue;
-                    }
-                    else
-                    {
-                        Console.WriteLine("The file {0} exists; overwrite? [Y/N]", Path.GetFileName(pathname));
-                        string s = Console.ReadLine();
-                        if (s != "Y" && s != "y")
-                            continue;
-                    }
-                }
+                    var downloadable = client.BeginDownloadActivity(activityInfo.Id.Value,
+                        opts.OutputPath, GetFileBaseName(activityInfo), opts.OutputFormat).GetAwaiter().GetResult();
 
-                downloadable.Download().GetAwaiter().GetResult();
-                ++nbExported;
-                Console.WriteLine("Exported activity {0}", Path.GetFileName(pathname));
+                    // we don't/can't know the extension when downloading original file format, until 
+                    // we make the request and get the filename from the headers 
+                    // so we've given the DownloadableActivity what it needs to build the full pathname
+                    // once the extension is known.
+                    string pathname = downloadable.GetTargetPathname();
+                    if (File.Exists(pathname))
+                    {
+                        // this only happens with Activity verb for downloading specific activity id(s);
+                        // with Export verb, we automatically skip activities which were already 
+                        // downloaded (GetActivities just does not return them)
+                        if (opts.Silent)
+                        {
+                            Console.WriteLine("The file {0} exists; skipping.", Path.GetFileName(pathname));
+                            continue;
+                        }
+                        else
+                        {
+                            Console.WriteLine("The file {0} exists; overwrite? [Y/N]", Path.GetFileName(pathname));
+                            string s = Console.ReadLine();
+                            if (s != "Y" && s != "y")
+                                continue;
+                        }
+                    }
+
+                    downloadable.Download().GetAwaiter().GetResult();
+                    ++nbExported;
+                    Console.WriteLine("Exported activity {0}", Path.GetFileName(pathname));
+                }
+                catch(StravaClientException e)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("An error occurred downloading {0}: {1}", GetFileBaseName(activityInfo), e.Message);
+                    Console.WriteLine();
+                }
             }
             return nbExported;
         }
