@@ -70,5 +70,17 @@ namespace StravaExporter.Properties {
                 this["SettingsUpgradeRequired"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string OutputFormat {
+            get {
+                return ((string)(this["OutputFormat"]));
+            }
+            set {
+                this["OutputFormat"] = value;
+            }
+        }
     }
 }
