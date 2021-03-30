@@ -274,11 +274,11 @@ namespace StravaExporter
             }
         }
 
-        private static int HelpDownloadActivities(StravaHttpClient client, CommonOptions opts, IEnumerable<IActivityInfo> activities)
+        private static int HelpDownloadActivities(StravaHttpClient client, CommonOptions opts, int nbConnections, IEnumerable<IActivityInfo> activities)
         {
             int nbExported = 0;
             object syncConsole = new object();
-            Task allTasks = activities.ForEachAsync((IActivityInfo activityInfo) =>
+            Task allTasks = activities.ForEachAsync(nbConnections, (IActivityInfo activityInfo) =>
             {
                 Task<string> t =  client.DownloadActivity(activityInfo.Id.Value, opts.OutputPath, GetFileBaseName(activityInfo), opts.OutputFormat);
                 return t.ContinueWith( (prevTask) =>
@@ -363,7 +363,8 @@ namespace StravaExporter
 
             var credentials = GetStravaCredentials(opts, true);
 
-            ServicePointManager.FindServicePoint(new Uri(StravaHttpClient.BASE_URL)).ConnectionLimit = Math.Min(Environment.ProcessorCount, 8);
+            int nbConnections = Math.Min(Environment.ProcessorCount, 8);
+            ServicePointManager.FindServicePoint(new Uri(StravaHttpClient.BASE_URL)).ConnectionLimit = nbConnections;
 
             using (var client = new StravaHttpClient())
             {
@@ -382,7 +383,7 @@ namespace StravaExporter
                 if (promptToOverwrite)
                     nbExported = HelpDownloadActivitiesWithOverwritePrompt(client, opts, activities);
                 else
-                    nbExported = HelpDownloadActivities(client, opts, activities);
+                    nbExported = HelpDownloadActivities(client, opts, nbConnections, activities);
             }
             return nbExported;
         }
