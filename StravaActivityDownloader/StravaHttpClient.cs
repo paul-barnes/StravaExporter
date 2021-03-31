@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 
 namespace StravaExporter
 {
@@ -83,20 +84,21 @@ namespace StravaExporter
         public class DownloadableActivity
         {
             private HttpResponseMessage httpResponse;
+            private string activityName;
             private string outputPath;
             private string baseFileName;
             private OutputFormat outputFormat;
-            public DownloadableActivity(HttpResponseMessage response, string outputPath, string baseFileName, OutputFormat outputFormat)
+            public DownloadableActivity(HttpResponseMessage response, string activityName, string outputPath, string baseFileName, OutputFormat outputFormat)
             {
                 this.httpResponse = response;
+                this.activityName = activityName;
                 this.outputPath = outputPath;
                 this.baseFileName = baseFileName;
                 this.outputFormat = outputFormat;
             }
             public async Task Download()
             {
-                using (FileStream fs = File.Create(GetTargetPathname()))
-                    await httpResponse.Content.CopyToAsync(fs);
+                await SaveContent(httpResponse, activityName, GetTargetPathname(), outputFormat);
             }
 
             public string GetTargetPathname()
@@ -119,18 +121,80 @@ namespace StravaExporter
             return response;
         }
 
-        public async Task<DownloadableActivity> BeginDownloadActivity(long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
+        public async Task<DownloadableActivity> BeginDownloadActivity(string activityName, long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
         {
             var httpResponse = await InitiateDownload(activityId, baseFileName, outputFormat);
-            return new DownloadableActivity(httpResponse, outputPath, baseFileName, outputFormat);
+            return new DownloadableActivity(httpResponse, activityName, outputPath, baseFileName, outputFormat);
         }
 
-        public async Task<string> DownloadActivity(long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
+        private static void SkipLeadingWhitespace(Stream stream)
+        {
+            int ch;
+            do
+            {
+                ch = stream.ReadByte();
+            } while (ch != -1 && char.IsWhiteSpace((char)ch));
+            if (stream.Position > 0)
+                stream.Seek(-1, SeekOrigin.Current);
+        }
+
+        private static bool SaveTcxXmlStream(Stream xmlStream, string activityName, Stream outStream)
+        {
+            SkipLeadingWhitespace(xmlStream);
+            var xmlDoc = new XmlDocument();
+            try
+            {
+                xmlDoc.Load(xmlStream);
+
+                XmlNamespaceManager nsmgr = new XmlNamespaceManager(xmlDoc.NameTable);
+                nsmgr.AddNamespace("g", "http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2");
+                var notesNode = xmlDoc.DocumentElement.SelectSingleNode("g:Activities/g:Activity/g:Notes", nsmgr);
+                if (notesNode != null && string.IsNullOrEmpty(notesNode.InnerText))
+                    notesNode.InnerText = activityName;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("Unexpected error while saving tcx as xml: {0}", e.ToString());
+                return false;
+            }
+            xmlDoc.Save(outStream);
+            return true;
+        }
+
+        private static async Task SaveContent(HttpResponseMessage httpResponse, string activityName, string pathName, OutputFormat outputFormat)
+        {
+            using (FileStream fs = File.Create(pathName))
+            {
+                string ext = Path.GetExtension(pathName);
+                if (string.Compare(ext, ".tcx", true) == 0)
+                {
+                    // my activities downloaded in 'original' format sourced from trainerroad include some whitespace 
+                    // before the opening <xml> tag, and SportTracks chokes on importing them. Strip such whitespace 
+                    // out here before saving. 
+                    // also, I want to put the activity name in the Notes element so it shows up in SportTracks and is searchable
+                    var stream = await httpResponse.Content.ReadAsStreamAsync();
+                    if (!SaveTcxXmlStream(stream, activityName, fs))
+                    {
+                        // if something went wrong, this wrote nothing to the file stream.
+                        // just write what we have, unchanged (except do skip the leading whitespace 
+                        // from trainerroad to make valid xml)
+                        stream.Seek(0, SeekOrigin.Begin);
+                        SkipLeadingWhitespace(stream);
+                        await stream.CopyToAsync(fs);
+                    }
+                }
+                else
+                {
+                    await httpResponse.Content.CopyToAsync(fs);
+                }
+            }
+        }
+
+        public async Task<string> DownloadActivity(string activityName, long activityId, string outputPath, string baseFileName, OutputFormat outputFormat)
         {
             var httpResponse = await InitiateDownload(activityId, baseFileName, outputFormat);
             var pathName = GetTargetPathname(outputPath, baseFileName, GetExtension(httpResponse, outputFormat));
-            using (FileStream fs = File.Create(pathName))
-                await httpResponse.Content.CopyToAsync(fs);
+            await SaveContent(httpResponse, activityName, pathName, outputFormat);
             return pathName;
         }
 

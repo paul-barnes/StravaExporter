@@ -280,7 +280,7 @@ namespace StravaExporter
             object syncConsole = new object();
             Task allTasks = activities.ForEachAsync(nbConnections, (IActivityInfo activityInfo) =>
             {
-                Task<string> t =  client.DownloadActivity(activityInfo.Id.Value, opts.OutputPath, GetFileBaseName(activityInfo), opts.OutputFormat);
+                Task<string> t =  client.DownloadActivity(activityInfo.Name, activityInfo.Id.Value, opts.OutputPath, GetFileBaseName(activityInfo), opts.OutputFormat);
                 return t.ContinueWith( (prevTask) =>
                 {
                     lock (syncConsole)
@@ -325,7 +325,7 @@ namespace StravaExporter
             {
                 try
                 {
-                    var downloadable = client.BeginDownloadActivity(activityInfo.Id.Value,
+                    var downloadable = client.BeginDownloadActivity(activityInfo.Name, activityInfo.Id.Value,
                         opts.OutputPath, GetFileBaseName(activityInfo), opts.OutputFormat).GetAwaiter().GetResult();
 
                     // we don't/can't know the extension when downloading original file format, until 
@@ -1102,6 +1102,7 @@ namespace StravaExporter
                 xmlWriter.WriteEndElement(); // Lap
             }
 
+            // TODO: write activity name to <Notes> (TrainingCenterDatabase/Activities/Activity/Notes) if not present? in new download format? 
             xmlWriter.WriteStartElement("Notes");
             xmlWriter.WriteValue(activity.Name);
             xmlWriter.WriteEndElement();
