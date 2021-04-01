@@ -22,6 +22,11 @@ namespace StravaExporter
         public UnsupportedFormatException(string message) : base(message) { }
     }
 
+    class AuthorizationException : StravaClientException
+    {
+        public AuthorizationException(string message) : base(message) { }
+    }
+
     class StravaHttpClient : HttpClient
     {
         public const string BASE_URL = "https://www.strava.com";

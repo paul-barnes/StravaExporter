@@ -20,6 +20,8 @@ using ImpromptuInterface;
 using Dynamitey;
 using System.Threading;
 using System.Collections.Concurrent;
+using System.Dynamic;
+using Newtonsoft.Json.Converters;
 
 namespace StravaExporter
 {
@@ -52,10 +54,39 @@ namespace StravaExporter
     }
     class Program
     {
-        internal static string client_id = "36425";
-        internal static string client_secret = "ee2979ecc9afe77bff701ed5fd5ff192632fea88";
+        private static string client_id;
+        private static string client_secret;
+
+        static bool GetAPIKeys(bool silent, out bool newKeys)
+        {
+            newKeys = false;
+            client_id = Settings.Default.ClientId;
+            client_secret = Settings.Default.ClientSecret;
+            if(string.IsNullOrEmpty(client_id) || string.IsNullOrEmpty(client_secret))
+            {
+                if (silent)
+                    throw new Exception("No Strava API keys found");
+                Console.WriteLine("This application requires Strava API keys in the form of a Client ID and a Client Secret.");
+                Console.WriteLine("You can obtain those from Strava by logging in from a browser and going to");
+                Console.WriteLine("Settings, My API Application. Once obtained, you can enter them here or put them in the");
+                Console.WriteLine("application configuration file StravaExporter.exe.config.");
+                Console.WriteLine();
+                Console.Write("Do you have API keys to enter? [y/n]: ");
+                string s = Console.ReadLine();
+                if (s != "Y" && s != "y")
+                    return false;
+                Console.Write("Enter the Client Id: ");
+                client_id = Console.ReadLine();
+                Console.Write("Enter the Client Secret: ");
+                client_secret = Console.ReadLine();
+                newKeys = true;
+            }
+            return true;
+        }
+
         static void Main(string[] args)
         {
+            bool saveApiKeys = false;
             try
             {
                 if (Settings.Default.SettingsUpgradeRequired)
@@ -71,7 +102,6 @@ namespace StravaExporter
                         string s = e.Message;
                     }
                 }
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
 
                 var parser = new Parser(settings =>
                 {
@@ -79,6 +109,18 @@ namespace StravaExporter
                     settings.HelpWriter = Console.Error;
                 });
                 var cmd = parser.ParseArguments<AuthorizeOptions, ActivityOptions, ExportOptions>(args);
+
+                if (cmd.Tag == ParserResultType.NotParsed)
+                    return; // e.g., command line errors or user requested help
+
+                bool silent = false;
+                cmd.WithParsed<CommonOptions>(o => silent = o.Silent);
+
+                if (!GetAPIKeys(silent, out saveApiKeys))
+                    return;
+
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
+
                 cmd
                     .WithParsed<AuthorizeOptions>(o => HandleAuthorize(o))
                     .WithParsed<ActivityOptions>(o => HandleActivity(o))
@@ -86,11 +128,18 @@ namespace StravaExporter
             }
             catch (Exception e)
             {
+                if (e is AuthorizationException)
+                    saveApiKeys = false;
                 Console.WriteLine("Error occurred:");
                 Console.WriteLine(e.Message);
             }
             finally
             {
+                if(saveApiKeys)
+                {
+                    Settings.Default.ClientId = client_id;
+                    Settings.Default.ClientSecret = client_secret;
+                }
                 Settings.Default.Save();
             }
         }
@@ -148,7 +197,7 @@ namespace StravaExporter
         {
             ValidateOptions(opt);
 
-            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
+            Configuration.Default.AccessToken = RefreshAccessToken(opt.Silent).GetAwaiter().GetResult();
 
             var activityIds = opt.Activities.ToList<long>();
             if (activityIds.Count == 0)
@@ -187,7 +236,7 @@ namespace StravaExporter
         {
             ValidateOptions(opt);
 
-            Configuration.Default.AccessToken = RefreshAccessToken().GetAwaiter().GetResult();
+            Configuration.Default.AccessToken = RefreshAccessToken(opt.Silent).GetAwaiter().GetResult();
 
             // downloading all activities between today and opt.Days ago 
             Console.WriteLine();
@@ -1111,12 +1160,14 @@ namespace StravaExporter
             xmlWriter.Close();
         }
 
-        static async Task<string> RefreshAccessToken()
+        static async Task<string> RefreshAccessToken(bool runSilent)
         {
             string refresh_token = Settings.Default.RefreshToken;
 
             if (string.IsNullOrEmpty(refresh_token))
             {
+                if (runSilent)
+                    throw new Exception("Strava authorization required, but --silent option was specified");
                 new StravaAuthorizer().Authorize(client_id, client_secret);
                 refresh_token = Settings.Default.RefreshToken;
             }
@@ -1132,6 +1183,21 @@ namespace StravaExporter
             builder.Query = query.ToString();
             string url = builder.ToString();
             HttpResponseMessage response = await httpClient.PostAsync(url, null);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+                throw new AuthorizationException("Authorization failed. Please check your API keys (client id and secret)");
+            if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                string content = await response.Content.ReadAsStringAsync();
+                dynamic jsonResponse = JsonConvert.DeserializeObject(content);
+                var errors = jsonResponse["errors"];
+                if (errors.Type == Newtonsoft.Json.Linq.JTokenType.Array && errors.Count > 0)
+                {
+                    var field = errors[0]["field"].Value as string;
+                    var code = errors[0]["code"].Value as string;
+                    if(field == "client_id" && code == "invalid")
+                        throw new AuthorizationException("Authorization failed. Invalid client id.");
+                }
+            }
             response.EnsureSuccessStatusCode();
             string responseBody = await response.Content.ReadAsStringAsync();
             Dictionary<string, string> responseDict = JsonConvert.DeserializeObject<Dictionary<string, string>>(responseBody);

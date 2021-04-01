@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -27,9 +28,10 @@ namespace StravaExporter
             // start the http server 
             MyHttpServer httpServer = new MyHttpServer(port);
             Thread thread = new Thread(new ThreadStart(httpServer.listen));
+            thread.IsBackground = true;
             thread.Start();
 
-            Console.WriteLine("Launching a browser to log in to Strava and authorize StravaExporter to download your data...");
+            Console.WriteLine("Launching a browser to log in to Strava and authorize StravaExporter to download your data");
 
             // build the initial authorization request url and launch a browser for user to 
             // log in and grant us access
@@ -43,13 +45,25 @@ namespace StravaExporter
             System.Diagnostics.Process.Start(url);
 
             // after the user completes the authorization in the browser, it will redirect to our http server.
-            // wait for the http server thread to complete
-            thread.Join();
+            // wait for the http server thread to complete for a while then we'll fail; 
+            // need to assume failure at some point, and if the client id was bad we can't recover otherwise
+            int timeoutSecs = 60;
+            Console.Write("Waiting for authorization from browser. Press CTRL+C to cancel. Will time out in... ");
+            int row = Console.CursorTop;
+            int col = Console.CursorLeft;
+            Console.Write("{0,2}", timeoutSecs);
+            while (--timeoutSecs >= 0 && !thread.Join(1000))
+            {
+                Console.SetCursorPosition(col, row);
+                Console.Write("{0,2}", timeoutSecs);
+            }
+            Console.WriteLine();
+            Console.WriteLine();
 
             string accessCode = httpServer.AccessCode;
 
             if (accessCode == null)
-                throw new Exception("StravaExporter was not authorized to access Strava data");
+                throw new AuthorizationException("StravaExporter was not authorized to access Strava data");
 
             // now we need to POST to https://www.strava.com/oauth/token with the access code
             // client_id: your application’s ID, obtained during registration
@@ -57,12 +71,14 @@ namespace StravaExporter
             // code: authorization code from last step
             // grant_type: the grant type for the request. For initial authentication, must always be "authorization_code".
 
-            // https://www.strava.com/oauth/token?client_id=36425&client_secret=ee2979ecc9afe77bff701ed5fd5ff192632fea88&code=&grant_type=authorization_code
+            // https://www.strava.com/oauth/token?client_id=12345&client_secret=xxxxx&code=&grant_type=authorization_code
             url = string.Format("https://www.strava.com/oauth/token?client_id={0}&client_secret={1}&code={2}&grant_type=authorization_code",
                 client_id, client_secret, accessCode);
 
             HttpClient httpClient = new HttpClient();
             HttpResponseMessage response = httpClient.PostAsync(url, null).GetAwaiter().GetResult();
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+                throw new AuthorizationException("Authorization failed. Please check your API keys (client id and secret)");
             response.EnsureSuccessStatusCode();
             string responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
