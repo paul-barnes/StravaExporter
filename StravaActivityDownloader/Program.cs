@@ -599,7 +599,7 @@ namespace StravaExporter
 
         static string RemoveInvalidFilenameChars(string s)
         {
-            char[] badChars = { '/', '\\', ':', '*', '?', '"', '<', '>', '|', '\r', '\n', '\t' };
+            char[] badChars = { '/', '\\', ':', '*', '?', '"', '<', '>', '|', '\r', '\n', '\t', '.' };
             foreach (char c in badChars)
                 s = s.Replace(c, '_');
             return s;
