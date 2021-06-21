@@ -574,6 +574,11 @@ namespace StravaExporter
 
                 foreach (var activity in activities)
                 {
+                    if (opt.ActivityTypeSpecified && opt.ActivityType != activity.Type)
+                    {
+                        Console.WriteLine("Skipping activity [{0}] on [{1}] with type [{2}] because it is not of the specified type", activity.Name, activity.StartDateLocal.ToString(), activity.Type.ToString());
+                        continue;
+                    }
                     if (opt.OutputFormat == OutputFormat.MakeTCX &&
                         activity.Type != ActivityType.Ride && 
                         activity.Type != ActivityType.Run && 
@@ -584,10 +589,26 @@ namespace StravaExporter
                         continue;
                     }
                     string pathname;
-                    if (ActivityFileExists(opt.OutputPath, activity.ActLike<IActivityInfo>(), out pathname))
+                    if (!opt.Force && ActivityFileExists(opt.OutputPath, activity.ActLike<IActivityInfo>(), out pathname))
                     {
-                        Console.WriteLine("Skipping activity because it has already been exported: {0} ", Path.GetFileName(pathname));
-                        continue;
+                        if (opt.OutputFormat == OutputFormat.Original)
+                        {
+                            Console.WriteLine("Skipping activity because it has already been exported: {0} ", Path.GetFileName(pathname));
+                            continue;
+                        }
+                        else if (opt.OutputFormat == OutputFormat.GPX && File.Exists(Path.ChangeExtension(pathname, "gpx")))
+                        {
+                            Console.WriteLine("Skipping activity because it has already been exported: {0} ", 
+                                Path.GetFileName(Path.ChangeExtension(pathname, "gpx")));
+                            continue;
+                        }
+                        else if ((opt.OutputFormat == OutputFormat.TCX || opt.OutputFormat == OutputFormat.MakeTCX) &&
+                            File.Exists(Path.ChangeExtension(pathname, "tcx")))
+                        {
+                            Console.WriteLine("Skipping activity because it has already been exported: {0} ",
+                                Path.GetFileName(Path.ChangeExtension(pathname, "tcx")));
+                            continue;
+                        }
                     }
                     activityIds.Add(activity.Id.Value);
                     summaryActivities.Add(activity);

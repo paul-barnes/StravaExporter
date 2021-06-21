@@ -1,6 +1,8 @@
 ﻿using CommandLine;
 using System.Collections.Generic;
 
+using IO.Swagger.Model;
+
 namespace StravaExporter
 {
     [Verb("Authorize", HelpText = "Authorize this app with Strava to access user data")]
@@ -43,8 +45,7 @@ namespace StravaExporter
         public bool SaveCredentials { get; set; }
 
         [Option("silent", Default = false, HelpText = "Do not prompt for credentials or display any other UI or prompts")]
-        public bool Silent{ get; set; }
-
+        public bool Silent { get; set; }
     }
 
     [Verb("Activity", HelpText = "Export the specified activity id(s) to TCX file(s)")]
@@ -59,5 +60,14 @@ namespace StravaExporter
     {
         [Option('d', "days", HelpText = "Download all activities from this many days ago to now. Default: 5")]
         public int? Days { get; set; }
+
+        [Option('t', "type", HelpText = "Download activities of this type; can be Ride, Run, Walk")]
+        public string ActivityTypeString { get; set; }
+
+        public bool ActivityTypeSpecified { get => !string.IsNullOrEmpty(ActivityTypeString); }
+        public ActivityType ActivityType { get => (ActivityType)System.Enum.Parse(typeof(ActivityType), ActivityTypeString, true); }
+
+        [Option("force", HelpText = "Force download even if local file already exists")]
+        public bool Force { get; set; }
     }
 }
